@@ -17,6 +17,58 @@ use types::{
 const BUILTIN_RECEIVER: &str = "_INKO";
 const ARRAY_LIT_VAR: &str = "$array";
 
+struct Comments {
+    nodes: Vec<ast::Comment>,
+}
+
+impl Comments {
+    fn new() -> Comments {
+        Comments { nodes: Vec::new() }
+    }
+
+    fn push(&mut self, comment: ast::Comment) {
+        let end = *comment.location.lines.end();
+        let last = self.nodes.last().map_or(0, |c| *c.location.lines.end());
+
+        if end - last > 1 && !self.nodes.is_empty() {
+            self.nodes.clear();
+        }
+
+        self.nodes.push(comment);
+    }
+
+    fn documentation_for(&mut self, location: &SourceLocation) -> String {
+        let should_take = self.nodes.last().map_or(false, |c| {
+            location.lines.start() - c.location.lines.end() == 1
+        });
+
+        if should_take {
+            self.generate()
+        } else {
+            if !self.nodes.is_empty() {
+                self.nodes.clear();
+            }
+
+            String::new()
+        }
+    }
+
+    fn generate(&mut self) -> String {
+        let mut docs = String::new();
+
+        for node in &self.nodes {
+            if !docs.is_empty() {
+                docs.push('\n');
+            }
+
+            docs.push_str(&node.value);
+        }
+
+        self.nodes.clear();
+        docs
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct IntLiteral {
     pub(crate) value: i64,
@@ -189,6 +241,7 @@ pub(crate) struct ExternImport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineConstant {
     pub(crate) public: bool,
+    pub(crate) documentation: String,
     pub(crate) constant_id: Option<types::ConstantId>,
     pub(crate) name: Constant,
     pub(crate) value: ConstExpression,
@@ -210,6 +263,7 @@ impl MethodKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineInstanceMethod {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) kind: MethodKind,
     pub(crate) name: Identifier,
@@ -223,6 +277,7 @@ pub(crate) struct DefineInstanceMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineModuleMethod {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) c_calling_convention: bool,
     pub(crate) name: Identifier,
@@ -236,6 +291,7 @@ pub(crate) struct DefineModuleMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineExternFunction {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) name: Identifier,
     pub(crate) arguments: Vec<MethodArgument>,
@@ -247,6 +303,7 @@ pub(crate) struct DefineExternFunction {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineRequiredMethod {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) kind: MethodKind,
     pub(crate) name: Identifier,
@@ -259,6 +316,7 @@ pub(crate) struct DefineRequiredMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineStaticMethod {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) name: Identifier,
     pub(crate) type_parameters: Vec<TypeParameter>,
@@ -271,6 +329,7 @@ pub(crate) struct DefineStaticMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineAsyncMethod {
+    pub(crate) documentation: String,
     pub(crate) mutable: bool,
     pub(crate) public: bool,
     pub(crate) name: Identifier,
@@ -284,6 +343,7 @@ pub(crate) struct DefineAsyncMethod {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineField {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) field_id: Option<types::FieldId>,
     pub(crate) name: Identifier,
@@ -310,6 +370,7 @@ pub(crate) enum ClassKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineClass {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) class_id: Option<types::ClassId>,
     pub(crate) kind: ClassKind,
@@ -321,6 +382,7 @@ pub(crate) struct DefineClass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineExternClass {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) class_id: Option<types::ClassId>,
     pub(crate) name: Constant,
@@ -330,6 +392,7 @@ pub(crate) struct DefineExternClass {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineVariant {
+    pub(crate) documentation: String,
     pub(crate) method_id: Option<types::MethodId>,
     pub(crate) variant_id: Option<types::VariantId>,
     pub(crate) name: Constant,
@@ -345,6 +408,7 @@ pub(crate) enum TraitExpression {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DefineTrait {
+    pub(crate) documentation: String,
     pub(crate) public: bool,
     pub(crate) trait_id: Option<types::TraitId>,
     pub(crate) name: Constant,
@@ -419,6 +483,11 @@ pub(crate) struct Try {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Noop {
+    pub(crate) location: SourceLocation,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Expression {
     And(Box<And>),
     AssignField(Box<AssignField>),
@@ -454,6 +523,7 @@ pub(crate) enum Expression {
     TypeCast(Box<TypeCast>),
     Recover(Box<Recover>),
     Try(Box<Try>),
+    Noop(Box<Noop>),
 }
 
 impl Expression {
@@ -493,6 +563,7 @@ impl Expression {
             Expression::TypeCast(ref n) => &n.location,
             Expression::Recover(ref n) => &n.location,
             Expression::Try(ref n) => &n.location,
+            Expression::Noop(ref n) => &n.location,
         }
     }
 
@@ -1020,6 +1091,7 @@ pub(crate) struct Loop {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Module {
+    pub(crate) documentation: String,
     pub(crate) module_id: types::ModuleId,
     pub(crate) expressions: Vec<TopLevelExpression>,
     pub(crate) location: SourceLocation,
@@ -1051,10 +1123,16 @@ impl<'a> LowerToHir<'a> {
     }
 
     fn run(mut self, module: ParsedModule) -> Module {
-        let expressions = self.top_level_expressions(module.ast.expressions);
+        let (doc, expressions) =
+            self.top_level_expressions(module.ast.expressions);
         let location = module.ast.location;
 
-        Module { module_id: self.module, expressions, location }
+        Module {
+            documentation: doc,
+            module_id: self.module,
+            expressions,
+            location,
+        }
     }
 
     fn file(&self) -> PathBuf {
@@ -1064,59 +1142,86 @@ impl<'a> LowerToHir<'a> {
     fn top_level_expressions(
         &mut self,
         nodes: Vec<ast::TopLevelExpression>,
-    ) -> Vec<TopLevelExpression> {
+    ) -> (String, Vec<TopLevelExpression>) {
+        let mut nodes = nodes.into_iter().peekable();
+        let mut last_line = 0;
+        let mut doc = String::new();
+
+        while let Some(ast::TopLevelExpression::Comment(c)) = nodes.peek() {
+            let line = *c.location.lines.start();
+
+            if line - last_line == 1 {
+                if !doc.is_empty() {
+                    doc.push('\n');
+                }
+
+                doc.push_str(&c.value);
+                nodes.next();
+                last_line = line;
+            } else {
+                break;
+            }
+        }
+
         let mut exprs = Vec::new();
+        let mut comments = Comments::new();
 
         for node in nodes {
-            let expr = match node {
+            match node {
                 ast::TopLevelExpression::DefineConstant(node) => {
-                    self.define_constant(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_constant(*node, doc));
                 }
                 ast::TopLevelExpression::DefineMethod(node) => {
-                    self.define_module_method(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_module_method(*node, doc));
                 }
                 ast::TopLevelExpression::DefineClass(node) => {
-                    self.define_class(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_class(*node, doc));
                 }
                 ast::TopLevelExpression::DefineTrait(node) => {
-                    self.define_trait(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_trait(*node, doc));
                 }
                 ast::TopLevelExpression::ReopenClass(node) => {
-                    self.reopen_class(*node)
+                    exprs.push(self.reopen_class(*node));
                 }
                 ast::TopLevelExpression::ImplementTrait(node) => {
-                    self.implement_trait(*node)
+                    exprs.push(self.implement_trait(*node));
                 }
                 ast::TopLevelExpression::Import(node) => {
                     // Build tags are evaluated as modules are parsed and
                     // imports are crawled. We ignore any imports filtered out
                     // through those tags here, such that the rest of the
                     // compilation pipeline doesn't need to care about them.
-                    if !node.include {
-                        continue;
+                    if node.include {
+                        exprs.push(self.import(*node));
                     }
-
-                    self.import(*node)
                 }
                 ast::TopLevelExpression::ExternImport(node) => {
-                    self.extern_import(*node)
+                    exprs.push(self.extern_import(*node));
                 }
-                ast::TopLevelExpression::Comment(_) => {
-                    panic!("comments can't be lowered to HIR");
+                ast::TopLevelExpression::Comment(c) => {
+                    comments.push(*c);
                 }
-            };
-
-            exprs.push(expr);
+            }
         }
 
-        exprs
+        (doc, exprs)
     }
 
     fn define_constant(
         &mut self,
         node: ast::DefineConstant,
+        documentation: String,
     ) -> TopLevelExpression {
         let node = DefineConstant {
+            documentation,
             public: node.public,
             constant_id: None,
             name: Constant {
@@ -1133,6 +1238,7 @@ impl<'a> LowerToHir<'a> {
     fn define_module_method(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> TopLevelExpression {
         self.operator_method_not_allowed(node.operator, &node.location);
 
@@ -1140,6 +1246,7 @@ impl<'a> LowerToHir<'a> {
 
         if external && node.body.is_none() {
             TopLevelExpression::ExternFunction(Box::new(DefineExternFunction {
+                documentation,
                 public: node.public,
                 name: self.identifier(node.name),
                 variadic: node.arguments.as_ref().map_or(false, |a| a.variadic),
@@ -1150,6 +1257,7 @@ impl<'a> LowerToHir<'a> {
             }))
         } else {
             TopLevelExpression::ModuleMethod(Box::new(DefineModuleMethod {
+                documentation,
                 public: node.public,
                 c_calling_convention: external,
                 name: self.identifier(node.name),
@@ -1183,12 +1291,17 @@ impl<'a> LowerToHir<'a> {
         }
     }
 
-    fn define_class(&mut self, node: ast::DefineClass) -> TopLevelExpression {
+    fn define_class(
+        &mut self,
+        node: ast::DefineClass,
+        documentation: String,
+    ) -> TopLevelExpression {
         if let ast::ClassKind::Extern = node.kind {
-            return self.define_extern_class(node);
+            return self.define_extern_class(node, documentation);
         }
 
         TopLevelExpression::Class(Box::new(DefineClass {
+            documentation,
             public: node.public,
             class_id: None,
             kind: match node.kind {
@@ -1208,23 +1321,31 @@ impl<'a> LowerToHir<'a> {
     fn define_extern_class(
         &mut self,
         node: ast::DefineClass,
+        documentation: String,
     ) -> TopLevelExpression {
+        let mut fields = Vec::new();
+        let mut comments = Comments::new();
+
+        for expr in node.body.values {
+            match expr {
+                ast::ClassExpression::DefineField(n) => {
+                    let doc = comments.documentation_for(&n.location);
+
+                    fields.push(self.define_field(*n, doc));
+                }
+                ast::ClassExpression::Comment(c) => {
+                    comments.push(*c);
+                }
+                _ => unreachable!(),
+            }
+        }
+
         TopLevelExpression::ExternClass(Box::new(DefineExternClass {
+            documentation,
             public: node.public,
             class_id: None,
             name: self.constant(node.name),
-            fields: node
-                .body
-                .values
-                .into_iter()
-                .map(|expr| {
-                    if let ast::ClassExpression::DefineField(n) = expr {
-                        self.define_field(*n)
-                    } else {
-                        unreachable!()
-                    }
-                })
-                .collect(),
+            fields,
             location: node.location,
         }))
     }
@@ -1233,27 +1354,44 @@ impl<'a> LowerToHir<'a> {
         &mut self,
         node: ast::ClassExpressions,
     ) -> Vec<ClassExpression> {
-        node.values
-            .into_iter()
-            .map(|n| match n {
+        let mut exprs = Vec::new();
+        let mut comments = Comments::new();
+
+        for n in node.values {
+            match n {
                 ast::ClassExpression::DefineMethod(node) => {
-                    self.define_method_in_class(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_method_in_class(*node, doc));
                 }
                 ast::ClassExpression::DefineField(node) => {
-                    ClassExpression::Field(Box::new(self.define_field(*node)))
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(ClassExpression::Field(Box::new(
+                        self.define_field(*node, doc),
+                    )));
                 }
                 ast::ClassExpression::DefineVariant(node) => {
-                    self.define_case(*node)
+                    let doc = comments.documentation_for(&node.location);
+
+                    exprs.push(self.define_case(*node, doc));
                 }
-                ast::ClassExpression::Comment(_) => {
-                    panic!("comments can't be lowered to HIR");
+                ast::ClassExpression::Comment(c) => {
+                    comments.push(*c);
                 }
-            })
-            .collect()
+            }
+        }
+
+        exprs
     }
 
-    fn define_field(&self, node: ast::DefineField) -> DefineField {
+    fn define_field(
+        &self,
+        node: ast::DefineField,
+        documentation: String,
+    ) -> DefineField {
         DefineField {
+            documentation,
             public: node.public,
             field_id: None,
             name: self.identifier(node.name),
@@ -1262,8 +1400,13 @@ impl<'a> LowerToHir<'a> {
         }
     }
 
-    fn define_case(&mut self, node: ast::DefineVariant) -> ClassExpression {
+    fn define_case(
+        &mut self,
+        node: ast::DefineVariant,
+        documentation: String,
+    ) -> ClassExpression {
         ClassExpression::Variant(Box::new(DefineVariant {
+            documentation,
             method_id: None,
             variant_id: None,
             name: self.constant(node.name),
@@ -1275,16 +1418,19 @@ impl<'a> LowerToHir<'a> {
     fn define_method_in_class(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> ClassExpression {
         match node.kind {
             ast::MethodKind::Async | ast::MethodKind::AsyncMutable => {
-                ClassExpression::AsyncMethod(self.define_async_method(node))
+                ClassExpression::AsyncMethod(
+                    self.define_async_method(node, documentation),
+                )
             }
-            ast::MethodKind::Static => {
-                ClassExpression::StaticMethod(self.define_static_method(node))
-            }
+            ast::MethodKind::Static => ClassExpression::StaticMethod(
+                self.define_static_method(node, documentation),
+            ),
             _ => ClassExpression::InstanceMethod(Box::new(
-                self.define_instance_method(node),
+                self.define_instance_method(node, documentation),
             )),
         }
     }
@@ -1292,10 +1438,12 @@ impl<'a> LowerToHir<'a> {
     fn define_static_method(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> Box<DefineStaticMethod> {
         self.operator_method_not_allowed(node.operator, &node.location);
 
         Box::new(DefineStaticMethod {
+            documentation,
             public: node.public,
             name: self.identifier(node.name),
             type_parameters: self
@@ -1311,10 +1459,12 @@ impl<'a> LowerToHir<'a> {
     fn define_async_method(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> Box<DefineAsyncMethod> {
         self.operator_method_not_allowed(node.operator, &node.location);
 
         Box::new(DefineAsyncMethod {
+            documentation,
             mutable: node.kind == ast::MethodKind::AsyncMutable,
             public: node.public,
             name: self.identifier(node.name),
@@ -1331,8 +1481,10 @@ impl<'a> LowerToHir<'a> {
     fn define_instance_method(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> DefineInstanceMethod {
         DefineInstanceMethod {
+            documentation,
             public: node.public,
             kind: match node.kind {
                 ast::MethodKind::Moving => MethodKind::Moving,
@@ -1353,8 +1505,10 @@ impl<'a> LowerToHir<'a> {
     fn define_required_method(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> Box<DefineRequiredMethod> {
         Box::new(DefineRequiredMethod {
+            documentation,
             public: node.public,
             kind: match node.kind {
                 ast::MethodKind::Moving => MethodKind::Moving,
@@ -1408,8 +1562,13 @@ impl<'a> LowerToHir<'a> {
         TypeBound { name, requirements, mutable, location: node.location }
     }
 
-    fn define_trait(&mut self, node: ast::DefineTrait) -> TopLevelExpression {
+    fn define_trait(
+        &mut self,
+        node: ast::DefineTrait,
+        documentation: String,
+    ) -> TopLevelExpression {
         TopLevelExpression::Trait(Box::new(DefineTrait {
+            documentation,
             public: node.public,
             trait_id: None,
             name: self.constant(node.name),
@@ -1425,29 +1584,38 @@ impl<'a> LowerToHir<'a> {
         &mut self,
         node: ast::TraitExpressions,
     ) -> Vec<TraitExpression> {
-        node.values
-            .into_iter()
-            .map(|node| match node {
+        let mut exprs = Vec::new();
+        let mut comments = Comments::new();
+
+        for node in node.values {
+            match node {
                 ast::TraitExpression::DefineMethod(n) => {
-                    self.define_method_in_trait(*n)
+                    let doc = comments.documentation_for(&n.location);
+
+                    exprs.push(self.define_method_in_trait(*n, doc));
                 }
-                ast::TraitExpression::Comment(_) => {
-                    panic!("comments can't be lowered to HIR");
+                ast::TraitExpression::Comment(c) => {
+                    comments.push(*c);
                 }
-            })
-            .collect()
+            }
+        }
+
+        exprs
     }
 
     fn define_method_in_trait(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> TraitExpression {
         if node.body.is_some() {
             TraitExpression::InstanceMethod(Box::new(
-                self.define_instance_method(node),
+                self.define_instance_method(node, documentation),
             ))
         } else {
-            TraitExpression::RequiredMethod(self.define_required_method(node))
+            TraitExpression::RequiredMethod(
+                self.define_required_method(node, documentation),
+            )
         }
     }
 
@@ -1465,35 +1633,41 @@ impl<'a> LowerToHir<'a> {
         &mut self,
         nodes: ast::ImplementationExpressions,
     ) -> Vec<ReopenClassExpression> {
-        nodes
-            .values
-            .into_iter()
-            .map(|node| match node {
+        let mut exprs = Vec::new();
+        let mut comments = Comments::new();
+
+        for node in nodes.values {
+            match node {
                 ast::ImplementationExpression::DefineMethod(n) => {
-                    self.define_method_in_reopen_class(*n)
+                    let doc = comments.documentation_for(&n.location);
+
+                    exprs.push(self.define_method_in_reopen_class(*n, doc));
                 }
-                ast::ImplementationExpression::Comment(_) => {
-                    panic!("comments can't be lowered to HIR");
+                ast::ImplementationExpression::Comment(c) => {
+                    comments.push(*c);
                 }
-            })
-            .collect()
+            }
+        }
+
+        exprs
     }
 
     fn define_method_in_reopen_class(
         &mut self,
         node: ast::DefineMethod,
+        documentation: String,
     ) -> ReopenClassExpression {
         match node.kind {
             ast::MethodKind::Static => ReopenClassExpression::StaticMethod(
-                self.define_static_method(node),
+                self.define_static_method(node, documentation),
             ),
             ast::MethodKind::Async | ast::MethodKind::AsyncMutable => {
                 ReopenClassExpression::AsyncMethod(
-                    self.define_async_method(node),
+                    self.define_async_method(node, documentation),
                 )
             }
             _ => ReopenClassExpression::InstanceMethod(Box::new(
-                self.define_instance_method(node),
+                self.define_instance_method(node, documentation),
             )),
         }
     }
@@ -1517,17 +1691,23 @@ impl<'a> LowerToHir<'a> {
         &mut self,
         node: ast::ImplementationExpressions,
     ) -> Vec<DefineInstanceMethod> {
-        node.values
-            .into_iter()
-            .map(|node| match node {
+        let mut exprs = Vec::new();
+        let mut comments = Comments::new();
+
+        for node in node.values {
+            match node {
                 ast::ImplementationExpression::DefineMethod(n) => {
-                    self.define_instance_method(*n)
+                    let doc = comments.documentation_for(&n.location);
+
+                    exprs.push(self.define_instance_method(*n, doc));
                 }
-                ast::ImplementationExpression::Comment(_) => {
-                    panic!("comments can't be lowered to HIR");
+                ast::ImplementationExpression::Comment(c) => {
+                    comments.push(*c);
                 }
-            })
-            .collect()
+            }
+        }
+
+        exprs
     }
 
     fn import(&self, node: ast::Import) -> TopLevelExpression {
@@ -2031,8 +2211,15 @@ impl<'a> LowerToHir<'a> {
     }
 
     fn const_array(&mut self, node: ast::Array) -> Box<ConstArray> {
-        let values =
-            node.values.into_iter().map(|n| self.const_value(n)).collect();
+        let mut values = Vec::new();
+
+        for expr in node.values {
+            if let ast::Expression::Comment(_) = expr {
+                continue;
+            }
+
+            values.push(self.const_value(expr));
+        }
 
         Box::new(ConstArray {
             resolved_type: types::TypeRef::Unknown,
@@ -2180,8 +2367,8 @@ impl<'a> LowerToHir<'a> {
             ast::Expression::Tuple(node) => {
                 Expression::Tuple(self.tuple_literal(*node))
             }
-            ast::Expression::Comment(_) => {
-                panic!("comments can't be lowered to HIR");
+            ast::Expression::Comment(c) => {
+                Expression::Noop(Box::new(Noop { location: c.location }))
             }
         }
     }
@@ -2832,28 +3019,24 @@ impl<'a> LowerToHir<'a> {
     }
 
     fn match_expression(&mut self, node: ast::Match) -> Box<Match> {
+        let mut cases = Vec::new();
+
+        for node in node.expressions {
+            if let ast::MatchExpression::Case(node) = node {
+                cases.push(MatchCase {
+                    variable_ids: Vec::new(),
+                    pattern: self.pattern(node.pattern),
+                    guard: node.guard.map(|n| self.expression(n)),
+                    body: self.expressions(node.body),
+                    location: node.location,
+                });
+            }
+        }
+
         Box::new(Match {
             resolved_type: types::TypeRef::Unknown,
             expression: self.expression(node.expression),
-            cases: node
-                .expressions
-                .into_iter()
-                .map(|node| {
-                    let node = if let ast::MatchExpression::Case(n) = node {
-                        n
-                    } else {
-                        panic!("comments can't be lowered to HIR")
-                    };
-
-                    MatchCase {
-                        variable_ids: Vec::new(),
-                        pattern: self.pattern(node.pattern),
-                        guard: node.guard.map(|n| self.expression(n)),
-                        body: self.expressions(node.body),
-                        location: node.location,
-                    }
-                })
-                .collect(),
+            cases,
             location: node.location,
             write_result: true,
         })
@@ -3037,6 +3220,7 @@ mod tests {
         assert_eq!(
             hir,
             Module {
+                documentation: String::new(),
                 module_id: types::ModuleId(0),
                 expressions: Vec::new(),
                 location: cols(1, 2)
@@ -3052,6 +3236,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3072,6 +3257,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: true,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(9, 9) },
@@ -3093,6 +3279,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3114,6 +3301,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3135,6 +3323,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3156,6 +3345,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3187,6 +3377,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3212,6 +3403,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Constant(Box::new(DefineConstant {
+                documentation: String::new(),
                 public: false,
                 constant_id: None,
                 name: Constant { name: "A".to_string(), location: cols(5, 5) },
@@ -3410,6 +3602,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::ModuleMethod(Box::new(DefineModuleMethod {
+                documentation: String::new(),
                 public: false,
                 c_calling_convention: false,
                 name: Identifier {
@@ -3482,6 +3675,7 @@ mod tests {
             hir,
             TopLevelExpression::ExternFunction(Box::new(
                 DefineExternFunction {
+                    documentation: String::new(),
                     public: false,
                     name: Identifier {
                         name: "foo".to_string(),
@@ -3505,6 +3699,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::ModuleMethod(Box::new(DefineModuleMethod {
+                documentation: String::new(),
                 public: false,
                 c_calling_convention: true,
                 name: Identifier {
@@ -3559,6 +3754,7 @@ mod tests {
             hir,
             TopLevelExpression::ExternFunction(Box::new(
                 DefineExternFunction {
+                    documentation: String::new(),
                     public: false,
                     name: Identifier {
                         name: "foo".to_string(),
@@ -3581,6 +3777,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 kind: ClassKind::Regular,
                 class_id: None,
@@ -3605,6 +3802,7 @@ mod tests {
                     location: cols(9, 12)
                 }],
                 body: vec![ClassExpression::Field(Box::new(DefineField {
+                    documentation: String::new(),
                     public: false,
                     field_id: None,
                     name: Identifier {
@@ -3635,6 +3833,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::ExternClass(Box::new(DefineExternClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 name: Constant {
@@ -3642,6 +3841,7 @@ mod tests {
                     location: cols(14, 14)
                 },
                 fields: vec![DefineField {
+                    documentation: String::new(),
                     public: false,
                     field_id: None,
                     name: Identifier {
@@ -3672,6 +3872,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: true,
                 kind: ClassKind::Regular,
                 class_id: None,
@@ -3693,12 +3894,14 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 kind: ClassKind::Regular,
                 class_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
                 type_parameters: Vec::new(),
                 body: vec![ClassExpression::Field(Box::new(DefineField {
+                    documentation: String::new(),
                     public: true,
                     field_id: None,
                     name: Identifier {
@@ -3729,6 +3932,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 kind: ClassKind::Builtin,
@@ -3756,6 +3960,7 @@ mod tests {
                     location: cols(17, 20)
                 }],
                 body: vec![ClassExpression::Field(Box::new(DefineField {
+                    documentation: String::new(),
                     public: false,
                     field_id: None,
                     name: Identifier {
@@ -3786,6 +3991,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 kind: ClassKind::Async,
@@ -3808,6 +4014,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 kind: ClassKind::Regular,
@@ -3815,6 +4022,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![ClassExpression::StaticMethod(Box::new(
                     DefineStaticMethod {
+                        documentation: String::new(),
                         public: false,
                         name: Identifier {
                             name: "a".to_string(),
@@ -3879,6 +4087,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 kind: ClassKind::Regular,
@@ -3886,6 +4095,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![ClassExpression::AsyncMethod(Box::new(
                     DefineAsyncMethod {
+                        documentation: String::new(),
                         mutable: false,
                         public: false,
                         name: Identifier {
@@ -3950,6 +4160,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 class_id: None,
                 kind: ClassKind::Regular,
@@ -3957,6 +4168,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![ClassExpression::InstanceMethod(Box::new(
                     DefineInstanceMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Regular,
                         name: Identifier {
@@ -4035,6 +4247,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: false,
                 trait_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
@@ -4071,6 +4284,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: true,
                 trait_id: None,
                 name: Constant {
@@ -4092,6 +4306,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: false,
                 trait_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
@@ -4099,6 +4314,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![TraitExpression::RequiredMethod(Box::new(
                     DefineRequiredMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Regular,
                         name: Identifier {
@@ -4158,6 +4374,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: false,
                 trait_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
@@ -4165,6 +4382,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![TraitExpression::RequiredMethod(Box::new(
                     DefineRequiredMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Moving,
                         name: Identifier {
@@ -4190,6 +4408,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: false,
                 trait_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
@@ -4197,6 +4416,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![TraitExpression::InstanceMethod(Box::new(
                     DefineInstanceMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Moving,
                         name: Identifier {
@@ -4223,6 +4443,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Trait(Box::new(DefineTrait {
+                documentation: String::new(),
                 public: false,
                 trait_id: None,
                 name: Constant { name: "A".to_string(), location: cols(7, 7) },
@@ -4230,6 +4451,7 @@ mod tests {
                 type_parameters: Vec::new(),
                 body: vec![TraitExpression::InstanceMethod(Box::new(
                     DefineInstanceMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Regular,
                         name: Identifier {
@@ -4340,6 +4562,7 @@ mod tests {
                 },
                 body: vec![ReopenClassExpression::InstanceMethod(Box::new(
                     DefineInstanceMethod {
+                        documentation: String::new(),
                         public: false,
                         kind: MethodKind::Regular,
                         name: Identifier {
@@ -4374,6 +4597,7 @@ mod tests {
                 },
                 body: vec![ReopenClassExpression::StaticMethod(Box::new(
                     DefineStaticMethod {
+                        documentation: String::new(),
                         public: false,
                         name: Identifier {
                             name: "foo".to_string(),
@@ -4407,6 +4631,7 @@ mod tests {
                 },
                 body: vec![ReopenClassExpression::AsyncMethod(Box::new(
                     DefineAsyncMethod {
+                        documentation: String::new(),
                         mutable: false,
                         public: false,
                         name: Identifier {
@@ -4441,6 +4666,7 @@ mod tests {
                 },
                 body: vec![ReopenClassExpression::AsyncMethod(Box::new(
                     DefineAsyncMethod {
+                        documentation: String::new(),
                         mutable: true,
                         public: false,
                         name: Identifier {
@@ -4600,6 +4826,7 @@ mod tests {
                 },
                 bounds: Vec::new(),
                 body: vec![DefineInstanceMethod {
+                    documentation: String::new(),
                     public: false,
                     kind: MethodKind::Regular,
                     name: Identifier {
@@ -4643,6 +4870,7 @@ mod tests {
                 },
                 bounds: Vec::new(),
                 body: vec![DefineInstanceMethod {
+                    documentation: String::new(),
                     public: false,
                     kind: MethodKind::Moving,
                     name: Identifier {
@@ -6093,6 +6321,7 @@ mod tests {
         assert_eq!(
             hir,
             TopLevelExpression::Class(Box::new(DefineClass {
+                documentation: String::new(),
                 public: false,
                 kind: ClassKind::Enum,
                 class_id: None,
@@ -6112,6 +6341,7 @@ mod tests {
                 }],
                 body: vec![
                     ClassExpression::Variant(Box::new(DefineVariant {
+                        documentation: String::new(),
                         method_id: None,
                         variant_id: None,
                         name: Constant {
@@ -6131,6 +6361,7 @@ mod tests {
                         location: cols(24, 35)
                     },)),
                     ClassExpression::Variant(Box::new(DefineVariant {
+                        documentation: String::new(),
                         method_id: None,
                         variant_id: None,
                         name: Constant {
